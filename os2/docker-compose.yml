@@ -1,0 +1,37 @@
+services:
+  db:
+    image: postgres:15-alpine
+    container_name: system2_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: admin
+      POSTGRES_PASSWORD: adminpassword
+      POSTGRES_DB: business_management
+      TZ: Asia/Kuala_Lumpur
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: system2_nextjs
+    restart: always
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+      - node_modules:/app/node_modules
+      - nextjs_cache:/app/.next
+    environment:
+      DATABASE_URL: "postgresql://admin:adminpassword@db:5432/business_management?schema=public"
+      TZ: Asia/Kuala_Lumpur
+    depends_on:
+      - db
+
+volumes:
+  pgdata:
+  node_modules:
+  nextjs_cache:

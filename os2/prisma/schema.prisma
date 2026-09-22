@@ -1,0 +1,113 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum InvoiceStatus {
+  UNPAID
+  PARTIAL
+  PAID
+}
+
+enum StockMovementType {
+  PURCHASE
+  SALE
+  ADJUSTMENT
+  DAMAGE
+}
+
+enum LedgerTranType {
+  PURCHASE_INVOICE
+  PAYMENT_MADE
+}
+
+model Supplier {
+  id                 String             @id @default(cuid())
+  name               String
+  code               String             @unique
+  contact            String?
+  email              String?
+  outstandingBalance Float              @default(0)
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  products           Product[]
+  purchaseInvoices   PurchaseInvoice[]
+  ledgerEntries      SupplierLedger[]
+}
+
+model Product {
+  id            String    @id @default(cuid())
+  sku           String    @unique
+  name          String
+  category      String?
+  currentStock  Int       @default(0)
+  costPrice     Float
+  sellingPrice  Float     @default(0)
+  supplierId    String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  supplier      Supplier?       @relation(fields: [supplierId], references: [id])
+  purchaseItems PurchaseItem[]
+  stockMovements StockMovement[]
+}
+
+model PurchaseInvoice {
+  id           String        @id @default(cuid())
+  invoiceNo    String        @unique
+  invoiceDate  DateTime
+  totalAmount  Float
+  status       InvoiceStatus @default(UNPAID)
+  supplierId   String
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  supplier     Supplier       @relation(fields: [supplierId], references: [id])
+  items        PurchaseItem[]
+}
+
+model PurchaseItem {
+  id                String   @id @default(cuid())
+  purchaseInvoiceId String
+  productId         String
+  quantity          Int
+  unitCost          Float
+  totalCost         Float
+
+  purchaseInvoice   PurchaseInvoice @relation(fields: [purchaseInvoiceId], references: [id], onDelete: Cascade)
+  product           Product         @relation(fields: [productId], references: [id])
+}
+
+model SupplierLedger {
+  id         String         @id @default(cuid())
+  tranDate   DateTime
+  tranNo     String
+  tranType   LedgerTranType
+  debit      Float          @default(0)
+  credit     Float          @default(0)
+  balance    Float
+  remarks    String?
+  supplierId String
+  createdAt  DateTime       @default(now())
+  updatedAt  DateTime       @updatedAt
+
+  supplier   Supplier @relation(fields: [supplierId], references: [id])
+}
+
+model StockMovement {
+  id            String            @id @default(cuid())
+  productId     String
+  movementType  StockMovementType
+  quantity      Int
+  previousStock Int
+  newStock      Int
+  referenceNo   String?
+  createdAt     DateTime          @default(now())
+
+  product       Product @relation(fields: [productId], references: [id])
+}
