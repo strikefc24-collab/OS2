@@ -75,7 +75,7 @@ export default function PurchasesClient({
             onClick={() => setUploadOpen(true)}
             className="flex items-center justify-center gap-2 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
           >
-            <UploadCloud size={16} /> Upload PDF Invoice
+            <UploadCloud size={16} /> Upload Excel Invoice
           </button>
           <button
             onClick={() => setModalOpen(true)}
@@ -95,10 +95,10 @@ export default function PurchasesClient({
         </span>
         <div>
           <p className="text-sm font-medium text-slate-700">
-            Upload Team X Invoice PDF
+            Drag &amp; Drop Excel Invoice from Team X
           </p>
           <p className="text-xs text-slate-500">
-            Digitally generated PDFs are parsed locally — no cloud APIs, no OCR.
+            .xlsx / .xls invoices are parsed locally — no cloud APIs.
           </p>
         </div>
       </button>

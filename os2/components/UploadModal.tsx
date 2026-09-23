@@ -1,7 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { X, UploadCloud, FileText } from "lucide-react";
+import { X, UploadCloud, FileSpreadsheet } from "lucide-react";
 import { parseAndCreatePurchaseInvoice } from "@/app/actions/purchase";
 
 type Supplier = { id: string; name: string; code: string };
@@ -24,8 +24,8 @@ export default function UploadModal({
 
   const pickFile = (candidate: File | undefined | null) => {
     if (!candidate) return;
-    if (!candidate.type.includes("pdf") && !candidate.name.toLowerCase().endsWith(".pdf")) {
-      setError("Only PDF files are supported");
+    if (!/\.(xlsx|xls)$/i.test(candidate.name)) {
+      setError("Only .xlsx or .xls files are supported");
       return;
     }
     setError(null);
@@ -41,7 +41,7 @@ export default function UploadModal({
   const handleSubmit = async () => {
     setError(null);
     if (!file) {
-      setError("Choose a PDF invoice to upload");
+      setError("Choose an Excel invoice to upload");
       return;
     }
     if (!supplierId) {
@@ -74,7 +74,7 @@ export default function UploadModal({
       <div className="absolute inset-0 bg-slate-900/40" onClick={onClose} />
       <div className="relative flex w-full max-w-lg flex-col rounded-xl bg-white shadow-xl">
         <div className="flex items-center justify-between border-b border-slate-200/80 px-6 py-4">
-          <h2 className="text-lg font-semibold text-slate-800">Upload Purchase Invoice PDF</h2>
+          <h2 className="text-lg font-semibold text-slate-800">Upload Excel Invoice</h2>
           <button
             onClick={onClose}
             className="rounded-md p-1.5 text-slate-500 hover:bg-slate-100"
@@ -102,7 +102,7 @@ export default function UploadModal({
               ))}
             </select>
             <p className="mt-1 text-xs text-slate-400">
-              The PDF may reference a different name (e.g. &quot;OZGUN&quot;) — confirm which supplier
+              The invoice file may reference a different supplier name — confirm which supplier
               record in System 2 this maps to.
             </p>
           </div>
@@ -122,14 +122,14 @@ export default function UploadModal({
             <input
               ref={inputRef}
               type="file"
-              accept="application/pdf,.pdf"
+              accept=".xlsx,.xls"
               className="hidden"
               onChange={(e) => pickFile(e.target.files?.[0])}
             />
             {file ? (
               <>
                 <span className="rounded-full bg-blue-50 p-3 text-blue-700">
-                  <FileText size={20} />
+                  <FileSpreadsheet size={20} />
                 </span>
                 <p className="text-sm font-medium text-slate-700">{file.name}</p>
                 <p className="text-xs text-slate-500">Click to choose a different file</p>
@@ -140,16 +140,16 @@ export default function UploadModal({
                   <UploadCloud size={20} />
                 </span>
                 <p className="text-sm font-medium text-slate-700">
-                  Drag &amp; drop a PDF here, or click to browse
+                  Drag &amp; Drop Excel Invoice from Team X
                 </p>
-                <p className="text-xs text-slate-500">Digitally generated invoices only — no scans</p>
+                <p className="text-xs text-slate-500">.xlsx or .xls files only</p>
               </>
             )}
           </div>
 
           {submitting && (
             <p className="rounded-lg bg-blue-50 px-3 py-2 text-sm text-blue-700">
-              Parsing local PDF &amp; updating inventory...
+              Parsing Excel &amp; updating inventory...
             </p>
           )}
 

@@ -1,10 +1,10 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { PDFParse } from "pdf-parse";
+import * as XLSX from "xlsx";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
-import { parseInvoiceText } from "@/lib/parseInvoice";
+import { parseInvoiceRows } from "@/lib/parseInvoiceExcel";
 
 type ResolvedPurchaseItem = {
   productId: string;
@@ -16,7 +16,7 @@ type ResolvedPurchaseItem = {
 type TxClient = Prisma.TransactionClient;
 
 /**
- * Shared final leg of both manual-entry and PDF-parsed purchases: creates the
+ * Shared final leg of both manual-entry and Excel-parsed purchases: creates the
  * invoice + line items, bumps stock with an audit trail, and posts the
  * supplier ledger credit — all within the caller's transaction.
  */
@@ -165,67 +165,66 @@ function slugifySku(name: string): string {
     .replace(/[^A-Z0-9]+/g, "-")
     .replace(/^-+|-+$/g, "")
     .slice(0, 40);
-  return `PDF-${slug || "ITEM"}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
+  return `XLS-${slug || "ITEM"}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`;
 }
 
-export type ParsePdfInvoiceResult = {
+const GENERIC_FILENAME_RE = /^(invoice|untitled|document|export|download)\b/i;
+
+function deriveInvoiceNo(fileName: string): string {
+  const base = fileName.replace(/\.[^.]+$/, "").trim();
+  const looksLikeReference = /[A-Za-z]{2,}[-_ ]?\d{2,}|\d{4,}/.test(base);
+
+  if (base && !GENERIC_FILENAME_RE.test(base) && looksLikeReference) {
+    const cleaned = base.replace(/[^A-Za-z0-9-]+/g, "-").replace(/^-+|-+$/g, "");
+    if (cleaned) return cleaned;
+  }
+
+  return `PINV-${Date.now()}`;
+}
+
+export type ParseExcelInvoiceResult = {
   invoiceNo: string;
   itemCount: number;
   totalAmount: number;
 };
 
 /**
- * Parses a locally-uploaded, digitally-generated purchase invoice PDF (no OCR —
- * the source system must produce a real text layer) and books it exactly like
- * a manually entered purchase invoice.
+ * Parses a locally-uploaded supplier Excel invoice (.xlsx/.xls) and books it
+ * exactly like a manually entered purchase invoice. Entirely local — no
+ * external services are called.
  */
 export async function parseAndCreatePurchaseInvoice(
   formData: FormData
-): Promise<ParsePdfInvoiceResult> {
+): Promise<ParseExcelInvoiceResult> {
   const file = formData.get("file");
   const supplierId = formData.get("supplierId");
 
-  if (!(file instanceof File)) throw new Error("No PDF file was provided");
+  if (!(file instanceof File)) throw new Error("No Excel file was provided");
   if (typeof supplierId !== "string" || !supplierId)
     throw new Error("Select which supplier this invoice belongs to");
-  if (file.type !== "application/pdf" && !file.name.toLowerCase().endsWith(".pdf"))
-    throw new Error("Only PDF files are supported");
+  if (!/\.(xlsx|xls)$/i.test(file.name))
+    throw new Error("Only .xlsx or .xls files are supported");
 
   const arrayBuffer = await file.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
 
-  const parser = new PDFParse({ data: buffer });
-  let rawText: string;
-  try {
-    const textResult = await parser.getText();
-    rawText = textResult.text;
-  } finally {
-    await parser.destroy();
-  }
+  const workbook = XLSX.read(buffer, { type: "buffer" });
+  const firstSheetName = workbook.SheetNames[0];
+  if (!firstSheetName) throw new Error("The uploaded file has no sheets");
 
-  if (!rawText.trim()) {
-    throw new Error(
-      "No text could be extracted from this PDF. It may be a scanned or image-only file — this ingestion engine only reads digitally generated PDFs, not scans."
-    );
-  }
+  const sheet = workbook.Sheets[firstSheetName];
+  const rows = XLSX.utils.sheet_to_json<unknown[]>(sheet, { header: 1 });
 
-  const parsed = parseInvoiceText(rawText);
-
-  if (parsed.items.length === 0) {
-    throw new Error(
-      "No line items could be recognized in this PDF. The table layout may not match the expected format."
-    );
-  }
-
-  const invoiceNo = parsed.invoiceNo ?? `PDF-${Date.now()}`;
-  const invoiceDate = parsed.invoiceDate ?? new Date();
+  const parsed = parseInvoiceRows(rows);
+  const invoiceNo = deriveInvoiceNo(file.name);
+  const invoiceDate = new Date();
 
   const result = await prisma.$transaction(async (tx) => {
     const resolvedItems: ResolvedPurchaseItem[] = [];
 
     for (const item of parsed.items) {
       let product = await tx.product.findFirst({
-        where: { name: { equals: item.productName, mode: "insensitive" } },
+        where: { name: { equals: item.productName, mode: "insensitive" }, supplierId },
       });
 
       if (!product) {
@@ -234,7 +233,7 @@ export async function parseAndCreatePurchaseInvoice(
             sku: slugifySku(item.productName),
             name: item.productName,
             category: item.category ?? undefined,
-            costPrice: item.unitPrice,
+            costPrice: item.unitCost,
             currentStock: 0,
             supplierId,
           },
@@ -244,8 +243,8 @@ export async function parseAndCreatePurchaseInvoice(
       resolvedItems.push({
         productId: product.id,
         quantity: item.quantity,
-        unitCost: item.unitPrice,
-        totalCost: item.lineTotal ?? item.quantity * item.unitPrice,
+        unitCost: item.unitCost,
+        totalCost: item.lineTotal,
       });
     }
 
