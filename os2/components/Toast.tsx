@@ -17,7 +17,7 @@ export default function Toast({
 
   return (
     <div className="fixed bottom-4 right-4 z-[60] flex max-w-sm items-start gap-3 rounded-xl border border-slate-200/80 bg-white px-4 py-3 shadow-lg">
-      <span className="mt-0.5 text-emerald-600">
+      <span className="mt-0.5 text-indigo-600">
         <CheckCircle2 size={18} />
       </span>
       <p className="flex-1 text-sm text-slate-700">{message}</p>

@@ -42,7 +42,7 @@ model Supplier {
 
 model Product {
   id            String    @id @default(cuid())
-  sku           String    @unique
+  productID     String    @unique
   name          String
   category      String?
   currentStock  Int       @default(0)

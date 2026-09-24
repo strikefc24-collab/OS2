@@ -1,21 +1,18 @@
 import { prisma } from "@/lib/prisma";
 import { ShoppingCart, Wallet, Boxes, Package } from "lucide-react";
+import { formatMoney } from "@/lib/format";
+import EntityDistributionChart from "@/components/charts/EntityDistributionChart";
 
 export const dynamic = "force-dynamic";
 
-function currency(value: number) {
-  return new Intl.NumberFormat("en-MY", {
-    style: "currency",
-    currency: "MYR",
-  }).format(value);
-}
-
 async function getDashboardMetrics() {
-  const [purchaseTotal, supplierOutstanding, products] = await Promise.all([
-    prisma.purchaseInvoice.aggregate({ _sum: { totalAmount: true } }),
-    prisma.supplier.aggregate({ _sum: { outstandingBalance: true } }),
-    prisma.product.findMany({ select: { currentStock: true, costPrice: true } }),
-  ]);
+  const [purchaseTotal, supplierOutstanding, products, supplierCount] =
+    await Promise.all([
+      prisma.purchaseInvoice.aggregate({ _sum: { totalAmount: true } }),
+      prisma.supplier.aggregate({ _sum: { outstandingBalance: true } }),
+      prisma.product.findMany({ select: { currentStock: true, costPrice: true } }),
+      prisma.supplier.count(),
+    ]);
 
   const stockValue = products.reduce(
     (sum, p) => sum + p.currentStock * p.costPrice,
@@ -27,6 +24,7 @@ async function getDashboardMetrics() {
     supplierOutstanding: supplierOutstanding._sum.outstandingBalance ?? 0,
     stockValue,
     activeProducts: products.length,
+    supplierCount,
   };
 }
 
@@ -36,17 +34,17 @@ export default async function DashboardPage() {
   const cards = [
     {
       label: "Total Purchases",
-      value: currency(metrics.totalPurchases),
+      value: formatMoney(metrics.totalPurchases),
       icon: ShoppingCart,
     },
     {
       label: "Supplier Outstanding",
-      value: currency(metrics.supplierOutstanding),
+      value: formatMoney(metrics.supplierOutstanding),
       icon: Wallet,
     },
     {
       label: "Total Stock Value",
-      value: currency(metrics.stockValue),
+      value: formatMoney(metrics.stockValue),
       icon: Boxes,
     },
     {
@@ -78,6 +76,16 @@ export default async function DashboardPage() {
             <p className="mt-3 text-2xl font-semibold text-slate-800">{value}</p>
           </div>
         ))}
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-3">
+        <div className="xl:col-span-1">
+          {/* customerCount is genuinely 0 — no Customer model exists yet, not a mocked value */}
+          <EntityDistributionChart
+            supplierCount={metrics.supplierCount}
+            customerCount={0}
+          />
+        </div>
       </div>
     </div>
   );

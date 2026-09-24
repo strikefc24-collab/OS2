@@ -3,6 +3,7 @@
 import { useRef, useState } from "react";
 import { X, UploadCloud, FileSpreadsheet } from "lucide-react";
 import { parseAndCreatePurchaseInvoice } from "@/app/actions/purchase";
+import { formatMoney } from "@/lib/format";
 
 type Supplier = { id: string; name: string; code: string };
 
@@ -16,6 +17,9 @@ export default function UploadModal({
   onCreated: (message: string) => void;
 }) {
   const [supplierId, setSupplierId] = useState(suppliers[0]?.id ?? "");
+  const [invoiceDate, setInvoiceDate] = useState(
+    () => new Date().toISOString().slice(0, 10)
+  );
   const [file, setFile] = useState<File | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -48,19 +52,23 @@ export default function UploadModal({
       setError("Select which supplier this invoice belongs to");
       return;
     }
+    if (!invoiceDate) {
+      setError("Invoice date is required");
+      return;
+    }
 
     setSubmitting(true);
     try {
       const formData = new FormData();
       formData.append("file", file);
       formData.append("supplierId", supplierId);
+      formData.append("invoiceDate", invoiceDate);
 
       const result = await parseAndCreatePurchaseInvoice(formData);
       onCreated(
-        `Imported invoice ${result.invoiceNo} — ${result.itemCount} item(s), total ${new Intl.NumberFormat(
-          "en-MY",
-          { style: "currency", currency: "MYR" }
-        ).format(result.totalAmount)}.`
+        `Imported invoice ${result.invoiceNo} — ${result.itemCount} item(s), total ${formatMoney(
+          result.totalAmount
+        )}.`
       );
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to parse and import invoice");
@@ -85,27 +93,41 @@ export default function UploadModal({
         </div>
 
         <div className="space-y-5 px-6 py-5">
-          <div>
-            <label className="mb-1 block text-xs font-medium text-slate-600">
-              This invoice belongs to
-            </label>
-            <select
-              value={supplierId}
-              onChange={(e) => setSupplierId(e.target.value)}
-              className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-            >
-              {suppliers.length === 0 && <option value="">No suppliers</option>}
-              {suppliers.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.name}
-                </option>
-              ))}
-            </select>
-            <p className="mt-1 text-xs text-slate-400">
-              The invoice file may reference a different supplier name — confirm which supplier
-              record in System 2 this maps to.
-            </p>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600">
+                This invoice belongs to
+              </label>
+              <select
+                value={supplierId}
+                onChange={(e) => setSupplierId(e.target.value)}
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+              >
+                {suppliers.length === 0 && <option value="">No suppliers</option>}
+                {suppliers.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="mb-1 block text-xs font-medium text-slate-600">
+                Invoice Date
+              </label>
+              <input
+                type="date"
+                required
+                value={invoiceDate}
+                onChange={(e) => setInvoiceDate(e.target.value)}
+                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
+              />
+            </div>
           </div>
+          <p className="text-xs text-slate-400">
+            The invoice file may reference a different supplier name — confirm which supplier
+            record in System 2 this maps to.
+          </p>
 
           <div
             onDragOver={(e) => {
@@ -140,7 +162,7 @@ export default function UploadModal({
                   <UploadCloud size={20} />
                 </span>
                 <p className="text-sm font-medium text-slate-700">
-                  Drag &amp; Drop Excel Invoice from Team X
+                  Drag &amp; Drop Excel Invoice
                 </p>
                 <p className="text-xs text-slate-500">.xlsx or .xls files only</p>
               </>
@@ -168,7 +190,7 @@ export default function UploadModal({
           </button>
           <button
             onClick={handleSubmit}
-            disabled={submitting || !file}
+            disabled={submitting || !file || !invoiceDate}
             className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50"
           >
             {submitting ? "Parsing..." : "Parse & Import"}

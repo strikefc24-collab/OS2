@@ -1,5 +1,5 @@
 const STYLES: Record<string, string> = {
-  PAID: "bg-emerald-50 text-emerald-700",
+  PAID: "bg-indigo-50 text-indigo-700",
   PARTIAL: "bg-amber-50 text-amber-700",
   UNPAID: "bg-rose-50 text-rose-700",
 };

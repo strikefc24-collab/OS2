@@ -3,31 +3,34 @@
 import { useState } from "react";
 import { X, Plus, Trash2 } from "lucide-react";
 import { createPurchaseInvoice } from "@/app/actions/purchase";
+import { formatMoney } from "@/lib/format";
+import ProductCombobox from "@/components/ProductCombobox";
 
 type Supplier = { id: string; name: string; code: string };
+type Product = { id: string; productID: string; name: string; costPrice: number };
 
 type LineItem = {
-  sku: string;
   name: string;
   quantity: string;
   costPrice: string;
 };
 
 function emptyLine(): LineItem {
-  return { sku: "", name: "", quantity: "1", costPrice: "0" };
+  return { name: "", quantity: "1", costPrice: "0" };
 }
 
 export default function PurchaseInvoiceModal({
   suppliers,
+  products,
   onClose,
   onCreated,
 }: {
   suppliers: Supplier[];
+  products: Product[];
   onClose: () => void;
   onCreated: () => void;
 }) {
   const [supplierId, setSupplierId] = useState(suppliers[0]?.id ?? "");
-  const [invoiceNo, setInvoiceNo] = useState("");
   const [invoiceDate, setInvoiceDate] = useState(
     () => new Date().toISOString().slice(0, 10)
   );
@@ -57,10 +60,6 @@ export default function PurchaseInvoiceModal({
       setError("Select a supplier");
       return;
     }
-    if (!invoiceNo.trim()) {
-      setError("Invoice number is required");
-      return;
-    }
     if (lines.length === 0) {
       setError("Add at least one line item");
       return;
@@ -70,10 +69,8 @@ export default function PurchaseInvoiceModal({
     try {
       await createPurchaseInvoice({
         supplierId,
-        invoiceNo: invoiceNo.trim(),
         invoiceDate: new Date(invoiceDate),
         items: lines.map((line) => ({
-          sku: line.sku.trim(),
           name: line.name.trim(),
           quantity: Number(line.quantity) || 0,
           costPrice: Number(line.costPrice) || 0,
@@ -105,8 +102,8 @@ export default function PurchaseInvoiceModal({
         </div>
 
         <div className="flex-1 space-y-5 overflow-y-auto px-6 py-5">
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
-            <div className="sm:col-span-1">
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <div>
               <label className="mb-1 block text-xs font-medium text-slate-600">
                 Supplier
               </label>
@@ -125,17 +122,6 @@ export default function PurchaseInvoiceModal({
             </div>
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-600">
-                Invoice No.
-              </label>
-              <input
-                value={invoiceNo}
-                onChange={(e) => setInvoiceNo(e.target.value)}
-                placeholder="INV-0001"
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600">
                 Invoice Date
               </label>
               <input
@@ -146,6 +132,9 @@ export default function PurchaseInvoiceModal({
               />
             </div>
           </div>
+          <p className="text-xs text-slate-400">
+            The invoice number is assigned automatically when you save.
+          </p>
 
           <div>
             <div className="mb-2 flex items-center justify-between">
@@ -164,7 +153,6 @@ export default function PurchaseInvoiceModal({
               <table className="min-w-full divide-y divide-slate-200/80 text-sm">
                 <thead className="bg-slate-50">
                   <tr>
-                    <th className="px-3 py-2 text-left font-medium text-slate-500">SKU</th>
                     <th className="px-3 py-2 text-left font-medium text-slate-500">Product Name</th>
                     <th className="px-3 py-2 text-left font-medium text-slate-500">Qty</th>
                     <th className="px-3 py-2 text-left font-medium text-slate-500">Unit Cost</th>
@@ -176,17 +164,17 @@ export default function PurchaseInvoiceModal({
                   {lines.map((line, i) => (
                     <tr key={i}>
                       <td className="px-3 py-2">
-                        <input
-                          value={line.sku}
-                          onChange={(e) => updateLine(i, { sku: e.target.value })}
-                          className="w-24 rounded-md border border-slate-200 px-2 py-1 text-slate-800 focus:border-indigo-400 focus:outline-none"
-                        />
-                      </td>
-                      <td className="px-3 py-2">
-                        <input
+                        <ProductCombobox
+                          products={products}
                           value={line.name}
-                          onChange={(e) => updateLine(i, { name: e.target.value })}
-                          className="w-40 rounded-md border border-slate-200 px-2 py-1 text-slate-800 focus:border-indigo-400 focus:outline-none"
+                          onChange={(name) => updateLine(i, { name })}
+                          onSelectProduct={(product) =>
+                            updateLine(i, {
+                              name: product.name,
+                              costPrice: String(product.costPrice ?? 0),
+                            })
+                          }
+                          placeholder="Type to search or add new"
                         />
                       </td>
                       <td className="px-3 py-2">
@@ -209,9 +197,9 @@ export default function PurchaseInvoiceModal({
                         />
                       </td>
                       <td className="px-3 py-2 text-slate-700">
-                        {(
+                        {formatMoney(
                           (Number(line.quantity) || 0) * (Number(line.costPrice) || 0)
-                        ).toFixed(2)}
+                        )}
                       </td>
                       <td className="px-3 py-2">
                         <button
@@ -229,7 +217,7 @@ export default function PurchaseInvoiceModal({
             </div>
 
             <div className="mt-2 flex justify-end text-sm font-medium text-slate-700">
-              Total: {total.toFixed(2)}
+              Total: {formatMoney(total)}
             </div>
           </div>
 
