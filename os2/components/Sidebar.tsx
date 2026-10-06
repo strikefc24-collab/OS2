@@ -19,8 +19,8 @@ const NAV_ITEMS = [
   { href: "/purchases", label: "Purchases", icon: ShoppingCart },
   { href: "/inventory", label: "Inventory", icon: Boxes },
   { href: "/sales", label: "Sales", icon: Receipt, disabled: true },
-  { href: "/customers", label: "Customer Ledger", icon: Users, disabled: true },
-  { href: "/suppliers", label: "Supplier Ledger", icon: Users },
+  { href: "/customers", label: "Customers", icon: Users },
+  { href: "/suppliers", label: "Suppliers", icon: Users },
   { href: "/expenses", label: "Expenses & Petty Cash", icon: Wallet, disabled: true },
 ];
 

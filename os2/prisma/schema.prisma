@@ -47,7 +47,6 @@ model Product {
   category      String?
   currentStock  Int       @default(0)
   costPrice     Float
-  sellingPrice  Float     @default(0)
   supplierId    String?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
@@ -55,6 +54,56 @@ model Product {
   supplier      Supplier?       @relation(fields: [supplierId], references: [id])
   purchaseItems PurchaseItem[]
   stockMovements StockMovement[]
+  customerPrices CustomerPrice[]
+}
+
+enum CustomerTranType {
+  SALES_INVOICE
+  PAYMENT_RECEIVED
+}
+
+model Customer {
+  id             String           @id @default(cuid())
+  customerID     String           @unique
+  name           String
+  phone          String?
+  address        String?
+  creditBalance  Float            @default(0)
+  openingBalance Float            @default(0)
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  ledgerEntries  CustomerLedger[]
+  prices         CustomerPrice[]
+}
+
+model CustomerLedger {
+  id         String           @id @default(cuid())
+  tranDate   DateTime
+  tranNo     String
+  tranType   CustomerTranType
+  debit      Float            @default(0)
+  credit     Float            @default(0)
+  remarks    String?
+  customerId String
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+
+  customer   Customer @relation(fields: [customerId], references: [id])
+}
+
+model CustomerPrice {
+  id          String   @id @default(cuid())
+  customPrice Float
+  customerId  String
+  productId   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  customer    Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  product     Product  @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([customerId, productId])
 }
 
 model PurchaseInvoice {

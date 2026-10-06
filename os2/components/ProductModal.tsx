@@ -12,7 +12,6 @@ type Product = {
   name: string;
   category: string | null;
   costPrice: number;
-  sellingPrice: number;
   currentStock: number;
   supplierId: string | null;
 };
@@ -32,7 +31,6 @@ export default function ProductModal({
   const [name, setName] = useState(product?.name ?? "");
   const [category, setCategory] = useState(product?.category ?? "");
   const [costPrice, setCostPrice] = useState(String(product?.costPrice ?? "0"));
-  const [sellingPrice, setSellingPrice] = useState(String(product?.sellingPrice ?? "0"));
   const [currentStock, setCurrentStock] = useState(String(product?.currentStock ?? "0"));
   const [supplierId, setSupplierId] = useState(product?.supplierId ?? "");
   const [submitting, setSubmitting] = useState(false);
@@ -53,7 +51,6 @@ export default function ProductModal({
           name: name.trim(),
           category: category.trim() || undefined,
           costPrice: Number(costPrice) || 0,
-          sellingPrice: Number(sellingPrice) || 0,
           supplierId: supplierId || undefined,
         });
         onSaved(`Product ${product.productID} updated.`);
@@ -62,7 +59,6 @@ export default function ProductModal({
           name: name.trim(),
           category: category.trim() || undefined,
           costPrice: Number(costPrice) || 0,
-          sellingPrice: Number(sellingPrice) || 0,
           currentStock: Number(currentStock) || 0,
           supplierId: supplierId || undefined,
         });
@@ -137,17 +133,6 @@ export default function ProductModal({
                 step="0.01"
                 value={costPrice}
                 onChange={(e) => setCostPrice(e.target.value)}
-                className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
-              />
-            </div>
-            <div>
-              <label className="mb-1 block text-xs font-medium text-slate-600">Selling Price</label>
-              <input
-                type="number"
-                min={0}
-                step="0.01"
-                value={sellingPrice}
-                onChange={(e) => setSellingPrice(e.target.value)}
                 className="w-full rounded-lg border border-slate-200 px-3 py-2 text-sm text-slate-800 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
               />
             </div>

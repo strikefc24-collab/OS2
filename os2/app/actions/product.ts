@@ -20,7 +20,6 @@ export type CreateProductInput = {
   name: string;
   category?: string;
   costPrice: number;
-  sellingPrice: number;
   currentStock: number;
   supplierId?: string;
 };
@@ -29,8 +28,6 @@ export async function createProduct(data: CreateProductInput) {
   if (!data.name?.trim()) throw new Error("Product name is required");
   if (!Number.isFinite(data.costPrice) || data.costPrice < 0)
     throw new Error("Cost price must be zero or a positive number");
-  if (!Number.isFinite(data.sellingPrice) || data.sellingPrice < 0)
-    throw new Error("Selling price must be zero or a positive number");
   if (!Number.isFinite(data.currentStock) || data.currentStock < 0)
     throw new Error("Starting stock must be zero or a positive number");
 
@@ -42,7 +39,6 @@ export async function createProduct(data: CreateProductInput) {
       name: data.name.trim(),
       category: data.category?.trim() || undefined,
       costPrice: data.costPrice,
-      sellingPrice: data.sellingPrice,
       currentStock: data.currentStock,
       supplierId: data.supplierId || undefined,
     },
@@ -58,7 +54,6 @@ export type UpdateProductInput = {
   name: string;
   category?: string;
   costPrice: number;
-  sellingPrice: number;
   supplierId?: string;
 };
 
@@ -67,8 +62,6 @@ export async function updateProduct(data: UpdateProductInput) {
   if (!data.name?.trim()) throw new Error("Product name is required");
   if (!Number.isFinite(data.costPrice) || data.costPrice < 0)
     throw new Error("Cost price must be zero or a positive number");
-  if (!Number.isFinite(data.sellingPrice) || data.sellingPrice < 0)
-    throw new Error("Selling price must be zero or a positive number");
 
   const product = await prisma.product.update({
     where: { id: data.id },
@@ -76,7 +69,6 @@ export async function updateProduct(data: UpdateProductInput) {
       name: data.name.trim(),
       category: data.category?.trim() || null,
       costPrice: data.costPrice,
-      sellingPrice: data.sellingPrice,
       supplierId: data.supplierId || null,
     },
   });

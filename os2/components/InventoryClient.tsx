@@ -8,6 +8,7 @@ import { deleteProduct } from "@/app/actions/product";
 import ProductModal from "@/components/ProductModal";
 import ConfirmDialog from "@/components/ConfirmDialog";
 import Toast from "@/components/Toast";
+import Pagination, { paginate } from "@/components/Pagination";
 
 type Supplier = { id: string; name: string };
 
@@ -18,7 +19,6 @@ type Product = {
   category: string | null;
   currentStock: number;
   costPrice: number;
-  sellingPrice: number;
   supplierId: string | null;
 };
 
@@ -31,6 +31,7 @@ export default function InventoryClient({
 }) {
   const router = useRouter();
   const [search, setSearch] = useState("");
+  const [page, setPage] = useState(1);
   const [modalOpen, setModalOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [deletingProduct, setDeletingProduct] = useState<Product | null>(null);
@@ -46,6 +47,8 @@ export default function InventoryClient({
         p.name.toLowerCase().includes(query) || p.productID.toLowerCase().includes(query)
     );
   }, [products, search]);
+
+  const { pageItems, current } = paginate(filteredProducts, page);
 
   const handleSaved = (message: string) => {
     setModalOpen(false);
@@ -110,7 +113,10 @@ export default function InventoryClient({
             />
             <input
               value={search}
-              onChange={(e) => setSearch(e.target.value)}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setPage(1);
+              }}
               placeholder="Search name or product ID"
               className="w-full rounded-lg border border-slate-200 py-2 pl-9 pr-3 text-sm text-slate-800 focus:border-indigo-400 focus:outline-none focus:ring-1 focus:ring-indigo-400"
             />
@@ -125,7 +131,6 @@ export default function InventoryClient({
                 <th className="px-3 py-3 text-left font-medium text-slate-500">Category</th>
                 <th className="px-3 py-3 text-left font-medium text-slate-500">Stock</th>
                 <th className="px-3 py-3 text-left font-medium text-slate-500">Cost Price</th>
-                <th className="px-3 py-3 text-left font-medium text-slate-500">Selling Price</th>
                 <th className="px-3 py-3 text-left font-medium text-slate-500">Stock Value</th>
                 <th className="px-3 py-3 text-left font-medium text-slate-500">Actions</th>
               </tr>
@@ -133,21 +138,20 @@ export default function InventoryClient({
             <tbody className="divide-y divide-slate-100">
               {filteredProducts.length === 0 && (
                 <tr>
-                  <td colSpan={8} className="px-5 py-8 text-center text-sm text-slate-500">
+                  <td colSpan={7} className="px-5 py-8 text-center text-sm text-slate-500">
                     {products.length === 0
                       ? "No products yet. Create a purchase invoice or add one manually."
                       : "No products match your search."}
                   </td>
                 </tr>
               )}
-              {filteredProducts.map((p) => (
+              {pageItems.map((p) => (
                 <tr key={p.id}>
                   <td className="whitespace-nowrap px-5 py-3 font-medium text-slate-800">{p.productID}</td>
                   <td className="whitespace-nowrap px-3 py-3 text-slate-700">{p.name}</td>
                   <td className="whitespace-nowrap px-3 py-3 text-slate-500">{p.category ?? "—"}</td>
                   <td className="whitespace-nowrap px-3 py-3 text-slate-700">{p.currentStock}</td>
                   <td className="whitespace-nowrap px-3 py-3 text-slate-700">{formatMoney(p.costPrice)}</td>
-                  <td className="whitespace-nowrap px-3 py-3 text-slate-700">{formatMoney(p.sellingPrice)}</td>
                   <td className="whitespace-nowrap px-3 py-3 text-slate-700">
                     {formatMoney(p.currentStock * p.costPrice)}
                   </td>
@@ -174,6 +178,7 @@ export default function InventoryClient({
             </tbody>
           </table>
         </div>
+        <Pagination total={filteredProducts.length} page={current} onPageChange={setPage} />
       </div>
 
       {modalOpen && (

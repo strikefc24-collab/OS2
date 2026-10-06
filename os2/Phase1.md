@@ -1,183 +1,155 @@
-# Phase 1 — System 2 (Retail Inventory & Purchase Management)
+# System 2 — Full Site Reference
 
-This document records everything built in Phase 1: the database architecture, the app shell, the manual purchase-entry workflow, and the automated invoice-ingestion engine (which pivoted twice during development — see "Ingestion engine history" below). It's meant as a handover reference for whoever picks up Phase 2.
+Retail inventory, purchasing, supplier and customer management. This document describes the site **as it exists today**: every page, what it does, how the data model fits together, and what is not built yet. It replaces the earlier Phase 1 handover notes, which described the old SKU system.
 
----
-
-## 1. Tech stack
-
-- **Next.js 16** (App Router, Turbopack), React 19, TypeScript, strict mode.
-- **Tailwind CSS v4** for styling — soft slate/indigo palette, no pure black/white.
-- **Prisma ORM v6.19.3** against **PostgreSQL**. (Note: `npm install prisma` today resolves to `8.0.0-rc.15`, a completely different "Prisma Developer Platform" CLI with no `db push`/`migrate dev`. Both `prisma` and `@prisma/client` are pinned to `6.19.3` in `package.json` so the classic self-hosted workflow works.)
-- **lucide-react** for icons.
-- **xlsx (SheetJS) 0.20.3** for Excel parsing — installed from `https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz` rather than the npm registry (see Security notes).
-- **tsx** for running the TypeScript seed script.
+Written for: the team that uses and maintains the site.
 
 ---
 
-## 2. Database schema (`prisma/schema.prisma`)
+## 1. At a glance
 
-Six models, all relations wired up:
-
-| Model | Purpose | Key fields |
+| Area | Page | Status |
 |---|---|---|
-| `Supplier` | A vendor System 2 buys from (e.g. "Team X"). | `code` (unique, e.g. `SUPP-0001`), `outstandingBalance` (running amount owed) |
-| `Product` | A stocked SKU. | `sku` (unique), `currentStock`, `costPrice`, `sellingPrice`, belongs to a `Supplier` |
-| `PurchaseInvoice` | A single supplier invoice booked into the system. | `invoiceNo` (unique), `totalAmount`, `status` (`UNPAID`/`PARTIAL`/`PAID`) |
-| `PurchaseItem` | One line item on an invoice. | `quantity`, `unitCost`, `totalCost`, links `PurchaseInvoice` ↔ `Product` |
-| `SupplierLedger` | Running accounts-payable ledger per supplier (debits/credits/balance). | `tranType` (`PURCHASE_INVOICE` / `PAYMENT_MADE`), `debit`, `credit`, `balance` |
-| `StockMovement` | Audit trail of every stock change. | `movementType` (`PURCHASE`/`SALE`/`ADJUSTMENT`/`DAMAGE`), `previousStock`, `newStock`, `referenceNo` |
+| Dashboard | `/` | Live: headline metrics + a supplier/customer chart |
+| Purchases | `/purchases` | Live: manual invoices, Excel invoice upload, edit, delete |
+| Inventory | `/inventory` | Live: product list, add/edit/delete, search, pagination |
+| Suppliers | `/suppliers` | Live: supplier list, product catalog + Excel price import, ledger, payments |
+| Customers | `/customers` | Live: customer list, ledger, payments, per-customer prices, pricing matrix upload |
+| Sales | `/sales` | Not built (sidebar item is greyed out) |
+| Expenses & Petty Cash | `/expenses` | Not built (sidebar item is greyed out) |
 
-Every purchase transaction touches all six models atomically (see §4).
-
-`prisma/seed.ts` seeds one supplier, "Team X" (`code: SUPP-0001`), so the purchase form always has a default option. Run via `npm run prisma:seed`.
-
----
-
-## 3. App shell
-
-### `lib/prisma.ts`
-Standard hot-reload-safe Prisma Client singleton — stores the client on `globalThis` in development so Next.js's fast refresh doesn't spawn a new connection pool on every edit.
-
-### `app/layout.tsx`
-Root layout. Sets the soft `bg-slate-50` background, renders `<Sidebar />` beside a `<main>` content area (`p-4 md:p-8`), and lays the two out as a row on desktop / column on mobile (`flex-col md:flex-row`).
-
-### `components/Sidebar.tsx`
-The left navigation, client component (`usePathname()` for active-link highlighting).
-- **Desktop:** fixed `w-64` column, always visible.
-- **Mobile/tablet:** collapses to a top bar with a hamburger button; tapping it opens an off-canvas drawer (an absolutely-positioned panel over a dimmed backdrop) with the same nav links, closing on link click or backdrop click.
-- **Links:** Dashboard (`/`), Purchases (`/purchases`), Inventory (`/inventory`) — all live; Sales, Customer Ledger, Expenses & Petty Cash — rendered as non-clickable, muted placeholders (`cursor-not-allowed`, no `href`) since those modules don't exist yet; Supplier Ledger (`/suppliers`) — live.
-
-### `app/globals.css`
-Overrides the default Next.js starter theme: background `#f8fafc` (slate-50), foreground `#1e293b` (slate-800), no dark-mode media query (client asked for one consistent eye-friendly light theme, not an auto dark mode).
+**Global rules applied everywhere**
+- **No currency symbols.** Money is a plain number with two decimals (`150.00`), via `formatMoney()` in `lib/format.ts`.
+- **No green in the UI.** Palette is slate, indigo, sky-blue, red and amber only.
+- Product IDs look like `PROD-00001`, customer IDs like `CUST-0001`, supplier codes like `SUPP-0001`.
 
 ---
 
-## 4. Purchase engine — server actions (`app/actions/purchase.ts`)
+## 2. Tech stack
 
-This file has three exported functions:
+- **Next.js 16** (App Router, Turbopack), **React 19**, **TypeScript**.
+- **Tailwind CSS v4**.
+- **Prisma 6.19.3** on **PostgreSQL**. (Pinned: newer `prisma` releases resolve to a different CLI with no `db push`.)
+- **xlsx (SheetJS) 0.20.3**, installed from SheetJS's own CDN rather than npm. The npm `0.18.5` build has unpatched high-severity advisories and this library reads user-uploaded files.
+- **lucide-react** icons, **recharts** charts, **tsx** for the seed script.
+- Runs in **Docker** (`docker-compose.yml`): a `system2_postgres` container (Postgres 15) and a `system2_nextjs` dev container.
 
-### `postPurchaseInvoice(tx, params)` — private, shared transaction core
-Not exported; it's the common final leg that **both** manual entry and file-upload ingestion call, so the accounting logic only exists once. Given a resolved list of `{productId, quantity, unitCost, totalCost}` items, it:
-1. Creates the `PurchaseInvoice` + all `PurchaseItem` rows in one nested-write.
-2. For each item, increments `Product.currentStock` and writes a `StockMovement` row (`PURCHASE`) recording before/after stock levels for audit purposes.
-3. Computes the new supplier balance and writes a `SupplierLedger` entry (`credit` = invoice total, `tranType: PURCHASE_INVOICE`).
-4. Updates `Supplier.outstandingBalance` to the new balance.
-
-Everything above runs inside the caller's `prisma.$transaction`, so a failure at any step rolls back the whole invoice — stock and ledger can never drift out of sync with the invoice record.
-
-### `createPurchaseInvoice(data)` — manual entry
-Used by the "+ New Purchase Invoice" modal. Validates supplier/invoice number/line items are present and numeric, then for each line item **upserts** a `Product` by `sku` (creates it with `currentStock: 0` if the SKU is new), builds the resolved-items array, and hands off to `postPurchaseInvoice`. Calls `revalidatePath` on `/purchases`, `/inventory`, `/suppliers`, and `/` afterward so all four pages reflect the change immediately.
-
-### `parseAndCreatePurchaseInvoice(formData)` — Excel ingestion
-Used by the "Upload Excel Invoice" flow. Takes a `FormData` containing `file` (the `.xlsx`/`.xls` File) and `supplierId`:
-1. Validates the file extension and that a supplier was chosen.
-2. Reads the buffer with `XLSX.read()`, takes the first sheet, converts it to a raw 2D array with `XLSX.utils.sheet_to_json(sheet, { header: 1 })`.
-3. Hands that array to `parseInvoiceRows()` (see §5) to get back structured items + total.
-4. Derives an invoice number from the filename if it looks like a real reference (contains letters+digits or a 4+ digit run and isn't a generic name like "invoice.xlsx"); otherwise generates `PINV-<timestamp>`.
-5. For each parsed item, finds an existing `Product` by `name` (case-insensitive) **and** `supplierId`; if none exists, creates one with a generated SKU (`XLS-<slugified-name>-<random>`).
-6. Hands the resolved items to the same `postPurchaseInvoice` used by manual entry — so a spreadsheet upload produces byte-identical bookkeeping to typing the invoice in by hand.
-
-### `getPurchaseInvoices()`
-Fetches all invoices with their supplier and line items (including each item's product), shaped into a flat structure the UI can render directly (avoids leaking raw Prisma relation objects to client components).
+All writes go through **Next.js Server Actions** in `app/actions/`. There are no REST endpoints.
 
 ---
 
-## 5. Excel parsing engine (`lib/parseInvoiceExcel.ts`)
+## 3. How the site is laid out
 
-This is the "resilience" layer — it doesn't assume the table starts at a fixed row, because the real files have a variable number of title/date rows above the data.
-
-**`findHeaderRow(rows)`** scans the first 15 rows looking for one that contains both a cell matching `/product name/i` and one matching `/^qty$/i` (or `/quantity/i`). Once found, it maps column indexes for `NO`, `Category`, `Product Name`, `QTY`, `Price/CTN`, `Discount`, `Net Price`, and `Net Total` by regex against the header cell text — so column *order* doesn't matter, only that the header text is recognizable.
-
-**`parseInvoiceRows(rows)`** then walks every row after the header:
-- Stops immediately (`break`) on the first row containing "Subtotal", "Total", or "Balance" (case-insensitive) — this is the footer boundary.
-- Skips rows with no product name, or with a missing/zero/non-numeric quantity.
-- Reads the unit cost from **Net Price** if that column exists, falling back to **Price/CTN** if not (Net Price is post-discount, so it's preferred as the true booked cost).
-- Reads `Net Total` for the line total if present, else computes `quantity × unitCost`.
-- Accumulates `invoiceTotal` and throws a descriptive error if the header can't be found or zero valid items result (surfaced directly in the upload modal).
-
-This was unit-verified during development with a synthetic in-memory workbook built via `XLSX.utils.aoa_to_sheet()` (title rows → header row → two line items → Subtotal/Grand Total footer) — the parser correctly skipped the preamble, extracted both items with correct quantities/prices, and stopped before the footer.
+- **Sidebar** (`components/Sidebar.tsx`): fixed on desktop; on mobile it becomes a top bar with a hamburger that opens a drawer. Links: Dashboard, Purchases, Inventory, Sales (disabled), Customers, Suppliers, Expenses & Petty Cash (disabled).
+- **Pattern used by most pages:** a server component (`page.tsx`, `force-dynamic`) loads data and passes it to a client component that handles search, tabs, modals and toasts. After a write, the client calls `router.refresh()` and the server action calls `revalidatePath()`.
+- **Shared UI pieces:** `Pagination` (25 rows per page, set by `PAGE_SIZE`), `SearchInput`, `Toast`, `ConfirmDialog`, `StatusBadge`.
 
 ---
 
-## 6. Frontend pages
+## 4. Data model (`prisma/schema.prisma`)
 
-### `app/page.tsx` — Dashboard
-Server component, `export const dynamic = "force-dynamic"` (always fetches live data, never statically cached — this is an operational dashboard, not marketing content). Runs three Prisma aggregates in parallel (`Promise.all`) and renders four metric cards: **Total Purchases** (sum of all invoice totals), **Supplier Outstanding** (sum of all suppliers' balances), **Total Stock Value** (Σ `currentStock × costPrice` across products), **Total Active Products** (product count). Currency formatted via `Intl.NumberFormat` (MYR).
+| Model | What it holds |
+|---|---|
+| `Supplier` | `name`, `code` (unique), `contact`, `email`, `outstandingBalance` (what we owe them) |
+| `Product` | `productID` (unique, `PROD-XXXXX`), `name`, `category`, `currentStock`, `costPrice`, optional `supplierId` |
+| `PurchaseInvoice` | `invoiceNo` (unique), `invoiceDate`, `totalAmount`, `status` (`UNPAID`/`PARTIAL`/`PAID`), `supplierId` |
+| `PurchaseItem` | One invoice line: `quantity`, `unitCost`, `totalCost`. Deleted with its invoice |
+| `SupplierLedger` | Supplier transactions: `PURCHASE_INVOICE` (debit) and `PAYMENT_MADE` (credit) |
+| `StockMovement` | Audit trail of every stock change: `PURCHASE`, `SALE`, `ADJUSTMENT`, `DAMAGE`, with before/after stock |
+| `Customer` | `customerID` (unique, `CUST-XXXX`), `name`, `phone`, `address`, `openingBalance`, `creditBalance` (what they owe) |
+| `CustomerLedger` | Customer transactions: `SALES_INVOICE` (debit) and `PAYMENT_RECEIVED` (credit) |
+| `CustomerPrice` | A custom price for one customer and one product. Unique on customer + product; deleted if either is deleted |
 
-### `app/purchases/page.tsx` — Purchases (server component)
-Fetches `getPurchaseInvoices()` and `getSuppliers()` in parallel, passes both down to the client component below. Also `force-dynamic`.
-
-### `components/PurchasesClient.tsx` — Purchases (client component, the bulk of the UI)
-- Header row: title + two buttons — **"Upload Excel Invoice"** (opens `UploadModal`) and **"+ New Purchase Invoice"** (opens `PurchaseInvoiceModal`).
-- **Dropzone banner:** a full-width dashed-border button ("Drag & Drop Excel Invoice from Team X") that also opens `UploadModal` — so there are two entry points into the same upload flow (a discoverable big banner, and a compact header button).
-- **Invoice history table:** every invoice, click-to-expand (chevron icon) revealing a nested table of that invoice's line items (SKU, product, qty, unit cost, line total). Status column uses `StatusBadge`.
-- State management: `modalOpen`/`uploadOpen` booleans for the two modals, `expandedId` for which invoice row is expanded, `toastMessage` for the post-upload success toast. After either modal succeeds, calls `router.refresh()` so the server-fetched invoice/supplier data is re-pulled without a full page reload.
-
-### `components/PurchaseInvoiceModal.tsx` — manual entry form
-Supplier dropdown, invoice number + date inputs, and a dynamic line-item table (SKU / Product Name / Qty / Unit Cost / auto-computed Line Total, with add/remove row buttons). On submit, calls `createPurchaseInvoice` directly (Next.js Server Actions can be invoked like normal async functions from client components) and reports validation/server errors inline.
-
-### `components/UploadModal.tsx` — Excel upload form
-Supplier dropdown (with a note that the spreadsheet's stated party may not match the System 2 supplier record — the user must explicitly confirm), and a drag-and-drop zone that also accepts click-to-browse (`accept=".xlsx,.xls"`). Shows the chosen filename, a "Parsing Excel & updating inventory..." loading state while the server action runs, and inline errors (bad extension, no header found, no valid items, etc.). On success, calls back up to `PurchasesClient` with a summary message which becomes the toast text.
-
-### `components/Toast.tsx`
-Minimal fixed-position bottom-right success toast, auto-dismisses after 5 seconds or on manual close.
-
-### `components/StatusBadge.tsx`
-Small pill component mapping `PAID`/`PARTIAL`/`UNPAID` to emerald/amber/rose badge colors.
-
-### `app/inventory/page.tsx` — Inventory
-Server component (`force-dynamic`). Lists every product with SKU, name, category, current stock, cost price, selling price, and computed stock value (`currentStock × costPrice`) per row.
-
-### `app/suppliers/page.tsx` — Supplier Ledger
-Server component (`force-dynamic`). Lists every supplier with code, name, contact, email, and outstanding balance. (Per-supplier transaction history via `getSupplierLedger()` exists in `app/actions/supplier.ts` but isn't wired into the UI yet — flagged as a Phase 2 item below.)
+Notes:
+- `Product` has **no selling price**. It was removed on purpose. What a customer pays lives in `CustomerPrice`.
+- ID helpers are in `lib/idGenerator.ts`: `getNextProductID`, `getNextCustomerID`, `getNextInvoiceNo` (`PINV-`), `getNextPaymentRef` (`PAY-`), `getNextReceiptRef` (`RCPT-`). Each reads the **highest existing** ID and adds one, so deleting rows never causes a collision.
+- `prisma/seed.ts` creates five suppliers (`SUPP-0001` to `SUPP-0005`, named "Supplier 1" to "Supplier 5").
 
 ---
 
-## 7. Ingestion engine history (why it changed twice)
+## 5. Pages in detail
 
-Phase 1 went through two ingestion approaches before landing on the current one — worth recording so Phase 2 doesn't repeat the investigation:
+### Dashboard (`/`)
+Four metric cards: **Total Purchases** (sum of invoice totals), **Supplier Outstanding**, **Total Stock Value** (stock × cost price), and **Total Active Products**. Below is an entity chart comparing supplier and customer counts.
 
-1. **PDF text parsing (`pdf-parse`, no OCR)** — built first, per the original spec assumption that Team X's invoices were "natively digital PDFs." Verification against the actual `TestInvoice.pdf` in the repo showed it was a **flattened image with zero embedded text** (Producer: "Microsoft: Print To PDF" — a screenshot printed to PDF, not a real export), so text-extraction-only parsing could never work on it. This code path (`lib/parseInvoice.ts`, the `pdf-parse` dependency) has since been **fully removed**.
-2. **Excel parsing (`xlsx`, current)** — the client scrapped PDF/OCR entirely in favor of uploading the supplier's Excel invoice directly. This is what's documented above and is the current, working ingestion path.
+### Purchases (`/purchases`)
+- Lists every purchase invoice with date, supplier, total, status badge and expandable line items. Searchable by invoice number or supplier.
+- **New Purchase Invoice:** pick a supplier, invoice number and date, then add line items with a product picker (type to search the supplier's products).
+- **Upload Excel Invoice:** upload the supplier's invoice spreadsheet. The parser (`lib/parseInvoiceExcel.ts`) finds the header row containing "Product Name" and "QTY" in the first 15 rows, reads category, quantity and Net Price (or Price/CTN), and stops at a Subtotal/Total/Balance row. Products are matched by name within that supplier; unknown ones are created.
+- **Edit invoice:** change quantities and unit costs, or remove lines. Stock and the supplier balance are adjusted to match.
+- **Delete invoice:** reverses the stock added, removes the ledger entry, reduces the supplier balance.
+- **Every purchase is one database transaction:** invoice + items, stock increases with `StockMovement` rows, supplier ledger debit, supplier balance. A failure rolls the whole thing back.
+
+### Inventory (`/inventory`)
+- Cards for **Total Products** and **Total Stock Value**.
+- Table: Product ID, Name, Category, Stock, Cost Price, Stock Value, Actions. Search by name or product ID; paginated.
+- **Add / Edit Product** (name, category, supplier, cost price, opening stock for new products). Product ID is generated automatically.
+- **Delete** is blocked if the product appears on any purchase invoice.
+- Stock itself can only change through purchases and invoice edits, not by editing a product.
+
+### Suppliers (`/suppliers`)
+Master-detail layout: supplier list on the left, the selected supplier on the right. The header shows code, contact, email and outstanding balance.
+- **Products tab:** that supplier's products (Product ID, Name, Category, Cost Price), with search (name, ID, category) and pagination.
+- **Import Products (Excel)** (sky-blue button):
+  - Finds the header row containing "Description" in the first 10 rows. Price comes from a "Price" column if present, otherwise the 2nd column. A "Category" column is optional.
+  - Prices are cleaned with `parseFloat(String(cell).replace(/[^\d.-]/g, '')) || 0`. Rows with no name are skipped.
+  - Existing products (matched by lowercase name within the supplier) get their cost price and category updated. New names are created with stock 0 and a new `PROD-XXXXX` ID.
+  - **Duplicate warning:** if a name appears more than once with different prices, the dialog lists the rows and asks you to fix the file or "Import Anyway" (the last row wins).
+  - **Efficient by design:** the supplier's products are loaded once into a Map, the next ID is read once and incremented in memory, and all writes are one `createMany` plus updates in a single transaction.
+- **Ledger tab:** running balance, debits (invoices) and credits (payments), paginated. **Log Payment** records a payment to the supplier and lowers their balance.
+
+### Customers (`/customers`)
+Master-detail layout with a global **Upload Pricing Matrix** button at the top.
+- **Left panel:** searchable list (name, ID or phone) showing each customer's balance. **Add Customer** shows the next `CUST-XXXX` and takes name, phone, address and an opening balance.
+- **Right panel:** profile (contact, address, opening balance, credit balance) and two tabs:
+  - **Ledger:** newest first. The running balance is recalculated on every read: it starts from the opening balance, then `previous + debit - credit` from oldest to newest, then the list is reversed. Backdated entries therefore never leave stale balances. **Log Payment** records money received and lowers the credit balance.
+  - **Products:** the products this customer has a custom price for (Product ID, Name, Category, Price), with search and pagination.
+- **Upload Pricing Matrix:**
+  - Sheet layout: column 1 `ITEM NAME`, column 2 `SUPPLIER PRICE`, columns 3 onward are customer names. The header row is found in the first 10 rows (case and extra spaces ignored).
+  - Cells starting with `=`, or formula cells with no stored value, are rejected with a "Paste as Values" message.
+  - Before writing, the site compares each `SUPPLIER PRICE` with the stored cost price. If any differ, you choose **Overwrite With Sheet** (updates product cost prices) or **Keep System Prices**. Customer prices are saved either way.
+  - Items and customers are matched by lowercase name. Unmatched items and unknown customer columns are skipped and listed in the result. Blank or zero customer cells are skipped.
+  - Products, customers and existing prices are each loaded once; writes are a single batch.
 
 ---
 
-## 8. Security notes
+## 6. Server actions (`app/actions/`)
 
-- **`xlsx` supply-chain fix:** `npm install xlsx` resolves to `0.18.5` on the npm registry, which carries two high-severity, unpatched advisories — prototype pollution ([GHSA-4r6h-8v6p-xvw6](https://github.com/advisories/GHSA-4r6h-8v6p-xvw6)) and a ReDoS ([GHSA-5pgg-2g8v-p4x9](https://github.com/advisories/GHSA-5pgg-2g8v-p4x9)) — with no fix available via npm, because SheetJS (the maintainer) stopped publishing patched releases there. Since this exact library parses **attacker-uploadable files**, that's a live attack surface, not theoretical. The project instead installs `xlsx@0.20.3` directly from SheetJS's own CDN (`https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz`), their official distribution channel for patched builds. `npm audit` no longer flags it.
-- **Server Actions as the only mutation path:** `createPurchaseInvoice` and `parseAndCreatePurchaseInvoice` are the only ways to write purchase data, and both run entirely server-side (Next.js Server Actions). Neither currently has authentication/authorization checks — there's no auth system yet in Phase 1, so anyone who can reach the app can post invoices. This needs to be closed before any real deployment (see Phase 2 items).
+| File | Functions |
+|---|---|
+| `purchase.ts` | `getPurchaseInvoices`, `createPurchaseInvoice`, `parseAndCreatePurchaseInvoice`, `updatePurchaseInvoice`, `deletePurchaseInvoice` |
+| `product.ts` | `getProducts`, `createProduct`, `updateProduct`, `deleteProduct` |
+| `supplier.ts` | `getSuppliers`, `getSupplierLedger`, `logSupplierPayment`, `getSupplierProducts`, `bulkUpsertSupplierProducts` |
+| `customer.ts` | `getCustomers`, `previewNextCustomerID`, `createCustomer`, `getCustomerLedger`, `logCustomerPayment`, `getCustomerPrices`, `analyzePricingMatrix`, `bulkUpsertPricingMatrix` |
+
+Excel parsers live in `lib/`: `parseInvoiceExcel.ts` (purchase invoices), `parseSupplierExcel.ts` (supplier price lists), `parsePricingMatrix.ts` (customer price matrix). The two newer ones run in the browser; the invoice parser runs on the server.
 
 ---
 
-## 9. Setup & running
+## 7. Running it
 
 ```bash
-# 1. Point DATABASE_URL at a real Postgres instance (.env)
-DATABASE_URL="postgresql://user:password@localhost:5432/os2?schema=public"
-
-# 2. Push the schema (classic Prisma 6.x workflow — see the CLI version note in §1)
-npx prisma db push
-
-# 3. Generate the Prisma Client (also runs automatically on install in most cases)
-npx prisma generate
-
-# 4. Seed the default "Team X" supplier
-npm run prisma:seed
-
-# 5. Start the dev server
-npm run dev
+docker compose up -d          # Postgres + the Next.js dev container
+npx prisma db push            # apply schema changes
+npm run prisma:seed           # optional: five starter suppliers
 ```
 
-`.env.example` documents the required variable. `.env` itself is gitignored except for `.env.example` (explicitly un-ignored in `.gitignore`).
+- The app runs at `http://localhost:3000`.
+- **Credentials:** `docker-compose.yml` sets the database to `admin` / `adminpassword` on `business_management`, and the container's `DATABASE_URL` points at it. The local `.env` is a placeholder, so running `prisma` from your own machine needs `DATABASE_URL` set to `postgresql://admin:adminpassword@localhost:5432/business_management?schema=public`.
+- **After changing `schema.prisma`:** run `npx prisma db push` once (the database is shared), then `docker exec system2_nextjs npx prisma generate` and restart the container. The container keeps its own copy of `node_modules`, so skipping this causes errors like "column does not exist".
+- Type check with `npx tsc --noEmit`. It reports one existing error, `LayoutProps` not found in `app/layout.tsx`, which is unrelated to recent work.
 
 ---
 
-## 10. Known gaps / suggested Phase 2 items
+## 8. Known gaps and things to know
 
-- **No authentication/authorization** — every server action is an open, unauthenticated POST endpoint. Needs a session/auth layer and per-action checks before real use.
-- **Supplier Ledger page is read-only** — `getSupplierLedger()` exists but isn't rendered; there's no drill-down from the Suppliers list into a supplier's individual ledger transactions yet.
-- **No payment recording** — `SupplierLedger`'s `PAYMENT_MADE` tran type and `PurchaseInvoice.status` (`PARTIAL`/`PAID`) exist in the schema but nothing in the UI currently creates a payment or transitions an invoice out of `UNPAID`.
-- **Sales, Customer Ledger, Expenses & Petty Cash** are nav placeholders only — no schema, actions, or pages exist for them yet.
-- **No automated tests** — verification so far has been manual (`tsc --noEmit`, `eslint`, `next build`, and one synthetic-workbook smoke test for the Excel parser). Worth adding real unit tests for `parseInvoiceRows` against a broader set of edge cases (missing columns, multiple sheets, merged header cells) once more real supplier files are available.
-- **Duplicate-invoice handling:** `invoiceNo` is a unique DB constraint, but neither server action currently catches the resulting Prisma error and turns it into a friendly "this invoice was already imported" message — it will currently surface as a raw error in the modal.
+- **No authentication.** Every server action is open to anyone who can reach the site. This must be closed before real use.
+- **Sales and Expenses do not exist.** `/sales` and `/expenses` have no pages. Because nothing creates sales yet, customer ledgers only ever contain payments (the `SALES_INVOICE` type is ready but unused), and customer balances can only go down.
+- **Invoice status never changes.** Purchase invoices stay `UNPAID`. Logging a supplier payment lowers the supplier's balance but does not mark any invoice `PARTIAL` or `PAID`.
+- **Dashboard customer count is hard-coded to 0.** The chart in `app/page.tsx` still passes `customerCount={0}` even though customers now exist. `components/charts/ProfitOverviewChart.tsx` exists but is not used on any page.
+- **Duplicate names in the pricing matrix.** The supplier import warns about repeated names with conflicting prices; the pricing matrix upload does not yet, and keeps the last row.
+- **Product names are only unique per supplier.** If two suppliers sell the same name, the pricing matrix picks the product whose cost price matches the sheet, otherwise the first one found.
+- **Pagination is in the browser.** All rows are loaded, then split into pages of 25. Fine for thousands of rows, not for hundreds of thousands.
+- **Duplicate invoice numbers** are rejected by the database but surface as a raw error rather than a friendly message.
+- **No automated tests.** Verification so far has been type checks, lint, and manual and scripted spot checks.
+- **Unused file:** `components/SupplierLedgerClient.tsx` is the old suppliers page and is no longer imported. It can be deleted.
